@@ -1,0 +1,118 @@
+name: pycom-gateway-config
+base: core20
+adopt-info: gateway-config
+summary: Helium gateway-config
+description: |
+  Gateway-config program for the Helium Gateway. This snap requires multiple interfaces to
+  be connected before the miner daemon can start.
+
+      snap connect helium-miner:i2c pi:i2c-1
+      snap connect helium-miner:log-observe
+      snap connect helium-miner:hardware-observe
+      snap connect helium-miner:network-control
+
+grade: stable
+confinement: strict
+
+architectures:
+  - build-on: arm64
+    run-on: arm64
+
+apps:
+  daemon:
+    command: sudo bin/gateway_config start
+    daemon: forking
+    environment:
+      COOKIE: "gwconfig"
+      HOME: "$SNAP_COMMON"
+      PATH: "/usr/lib/erlang/bin:$SNAP/_build/prod/rel/gateway_config:$PATH"
+      RELX_OUT_FILE_PATH: "/tmp"
+      RELX_CONFIG_PATH: "$SNAP_COMMON/config/sys"
+      RUNNER_LOG_DIR: "$SNAP_COMMON/log"
+    plugs:
+      - i2c
+      - log-observe
+      - network
+      - network-bind
+      - network-control
+      - hardware-observe
+    slots:
+      - dbus-svc
+  pycom-gateway-config:
+    command: miner/bin/miner
+    environment:
+      COOKIE: "gwconfig"
+      HOME: "$SNAP_COMMON"
+      PATH: "/usr/lib/erlang/bin:$SNAP/miner/bin:$PATH"
+      RELX_OUT_FILE_PATH: "/tmp"
+      RELX_CONFIG_PATH: "$SNAP_COMMON/config/sys"
+      RUNNER_LOG_DIR: "$SNAP_COMMON/log"
+    plugs:
+      - i2c
+      - log-observe
+      - network
+      - network-bind
+      - network-control
+      - hardware-observe
+
+slots:
+  dbus-svc:
+    interface: dbus
+    bus: system
+    name: com.helium.Config
+
+layout:
+  /usr/lib/erlang:
+    bind: $SNAP/usr/lib/erlang
+  /var/log/miner:
+    bind: $SNAP_COMMON/log
+  /var/data:
+    bind: $SNAP_COMMON/data
+  /opt/miner/update:
+    bind: $SNAP_COMMON/update
+  /etc/lsb_release:
+    bind-file: $SNAP_COMMON/.lsb_release
+
+parts:
+  erlang:
+    plugin: dump
+    source: https://packages.erlang-solutions.com/erlang/debian/pool/esl-erlang_22.3.4.2-1~ubuntu~focal_arm64.deb
+    stage-packages:
+      - libtinfo6
+  gwconfig:
+    after: [ erlang ]
+    plugin: make
+    source: https://github.com/helium/gateway-config.git
+    build-packages:
+      - autoconf
+      - automake
+      - bison
+      - cargo
+      - cmake
+      - doxygen
+      - flex
+      - g++
+      - libclang-dev
+      - libdbus-1-dev
+      - libgmp-dev
+      - libsnappy-dev
+      - libsodium-dev
+      - libssl-dev
+      - libtool
+    stage-packages:
+      - libsodium23
+    build-environment:
+      - PATH: "${SNAPCRAFT_STAGE}/usr/lib/erlang/bin:$PATH"
+      - CFLAGS: "-U__sun__"
+      - ERLANG_ROCKSDB_OPTS: "-DWITH_BUNDLE_SNAPPY=ON -DWITH_BUNDLE_LZ4=ON"
+      - ERL_COMPILER_OPTIONS: "[deterministic]"
+    override-build: |
+      # use erlang from staging dir
+      ln -sf $SNAPCRAFT_STAGE/usr/lib/erlang /usr/lib/erlang
+      # set package version from miner upstream version
+      VER="$(grep -m1 "{release, {miner," $SNAPCRAFT_PART_SRC/rebar.config | sed 's/^.* "//;s/".*$//')"
+      echo "setting snap version to $VER"
+      snapcraftctl set-version "$VER"
+      # build and install
+      make release && \
+      cp -av $SNAPCRAFT_PART_BUILD/_build/prod/rel/miner $SNAPCRAFT_PART_INSTALL/
